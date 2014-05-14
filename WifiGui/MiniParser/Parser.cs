@@ -26,7 +26,7 @@ namespace WindowsFormsApplication1
         /// Main function that iterates over the token list.
         /// </summary>
         /// <param name="lambda">Generic lambda function that will be executed whenever an EOL is reached in the script file.</param>
-        public void Interpret(Action<string,object> lambda)
+        public void Interpret(ProcessLineDelegate lambda)
         {
             Token current = head;
             Text.StringBuilder accum = new System.Text.StringBuilder();
@@ -304,4 +304,5 @@ namespace WindowsFormsApplication1
         */
 
     }
+    delegate void ProcessLineDelegate(string s, Parser p);
 }

@@ -62,6 +62,10 @@ namespace WindowsFormsApplication1
             _loltimer.Elapsed += new System.Timers.ElapsedEventHandler(_loltimer_Elapsed);
             _loltimer.Start();
             GPIBConnector dc = null;
+            TempChamber tch = null;
+            var T_Queue = new Queue<int>(config.temp); int temperature = 0;
+            var V_Queue = new Queue<float>(config.volt); float voltage = 0.0f;
+            //int t_count = 0, v_count = 0; //counters for temp and volt
 
             /*
              * I am almost certain that there is a better way to create classes on the fly, rather than 
@@ -75,7 +79,6 @@ namespace WindowsFormsApplication1
                 dc.SendData("VOLT 3.8"); // set volt
                 dc.SendData("OUTPUT:STATE ON");
             }
-            TempChamber tch = null;
             if (config.temp.Length > 0)
             {
                 tch = new TempChamber(config.comport, 9600, 8, System.IO.Ports.Parity.None, System.IO.Ports.StopBits.One);
@@ -86,7 +89,7 @@ namespace WindowsFormsApplication1
                 }
             }
             //
-            int t_count = 0, v_count = 0; //counters for temp and volt
+
             //
             GPIBConnector SPA = new GPIBConnector();
             SPA.Connect(0, config.spaddr, 0);
@@ -123,29 +126,31 @@ namespace WindowsFormsApplication1
             //
             parser.AddData("imgpath", @config.savePicLoc);
             //used for temperature testing, empty string otherwise
-            string envinfo = "";
+            string envinfo = String.Empty;
             do
             {
                 if (tch != null)
                 {
-                    bgw.ReportProgress(2, String.Format("Settling temperature at {0}\u00B0C", config.temp[t_count]));
-                    tch.SettleTemp(config.temp[t_count], 0.3f, ref this._Cancel, new StreamWriter(Stream.Null));
-                    parser.AddData("temp", config.temp[t_count].ToString());
+                    temperature = T_Queue.Dequeue();
+                    bgw.ReportProgress(2, String.Format("Settling temperature at {0}\u00B0C", temperature));
+                    tch.SettleTemp(temperature, 0.3f, ref this._Cancel, new StreamWriter(Stream.Null));
+                    parser.AddData("temp", temperature.ToString());
                 }
                 do
                 {
                     if (dc != null)
                     {
-                        bgw.ReportProgress(2, String.Format("Setting voltage to {0}V", config.volt[v_count]));
-                        dc.SendData("VOLT " + config.volt[v_count]);
+                        voltage = V_Queue.Dequeue();
+                        bgw.ReportProgress(2, String.Format("Setting voltage to {0}V", voltage));
+                        dc.SendData("VOLT " + voltage);
                         dc.SendData("MEAS:VOLT?");
-                        double volt = Convert.ToDouble(dc.ReadData());
-                        if (Math.Abs(volt - config.volt[v_count]) > 0.02)
+                        double current_volt = Convert.ToDouble(dc.ReadData());
+                        if (Math.Abs(current_volt - voltage) > 0.02)
                         {
                             throw new Exception("Cannot change voltage!");
                         }
-                        parser.AddData("volt", config.volt[v_count].ToString());
-                        envinfo = String.Format("{0},{1}", config.temp[t_count], config.volt[v_count]);
+                        parser.AddData("volt", voltage.ToString());
+                        envinfo = String.Format("{0},{1}", temperature, voltage);
                     }
                     //
                     foreach (int c in config.channel)
@@ -178,39 +183,33 @@ namespace WindowsFormsApplication1
                                     String.Format("Running: 802.11{0}, Ch. {1}, {2} Mbps", m, c, spd)
                                     );
                                 /*
-                                 * The ugliest thing one can possibly do. Probably should have called a delagate instead of 
-                                 * leaving a lambda function here. How this one works:
-                                 * If script line contained '?', meaning a query statement in SCPI, read the output.
-                                 * Additionally, store this value in $_ variable. I like Perl. 
-                                 * Also, the result is logged into a file with the corresponding Tx details. 
+                                 * This delegate type is defined in Parser.cs
+                                 * Let's hope this works!
                                  */
-                                parser.Interpret((s, o) =>
+                                ProcessLineDelegate pdel = new ProcessLineDelegate((s, p) =>
                                 {
                                     SPA.SendData(s.Trim() + @"\n");
                                     Thread.Sleep(80);
                                     if (s.Contains('?'))
                                     {
                                         string res = SPA.ReadData().Trim();
-                                        (o as Parser).AddData("_", res);
+                                        p.AddData("_", res);
                                         logger.WriteLine("{0},{1},{2},{3}", envinfo, c, spd, res);
                                     }
                                 });
+                                parser.Interpret(pdel);
                             }
                         }
                     }
-                    v_count++;
-                } while (v_count < config.volt.Length);
-                v_count = 0; //reset DC-supply loop
-                t_count++;
-            } while (t_count < config.temp.Length);
+                } while (V_Queue.Count() > 0);
+                V_Queue = new Queue<float>(config.volt);
+            } while (T_Queue.Count() > 0);
             /*
              * HEY LOOK BELOW, IT IS A LABEL
              * YES, THAT MEANS THERE IS GOTO STATEMENT LURKING AROUND HERE SOMEWHERE...
-             * SACRILEGE!
              */
             //Clean-up -> GOTO STATEMENT FROM THE DATA RATE LOOP
             Cleanup:
-
             //Report completion
             if (_Cancel.WaitOne(0))
                 bgw.ReportProgress(100, "Test Cancelled");
@@ -229,15 +228,7 @@ namespace WindowsFormsApplication1
             }
             logger.Close();
         }
-        //String array to be used by the LOLTimer class. Modify it as you please, don't forget to be creative!
-        private string[] cake = {"Figuring out what to do next...", "Formatting test equipment...", "Starting a phone call...",
-            "Retrieving Facebook API Token...", "Starting music playback...", "Scrambling Tx Power values...", "Doing science stuff..."};
-        void _loltimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
-        {
-            Random r = new Random();
-            ((sender as LolTimer).Param1 as System.ComponentModel.BackgroundWorker)
-                .ReportProgress(2, cake[r.Next(0, cake.Length)]);
-        }
+
         public void TestGPIBScript()
         {
             GPIBConnector SPA = new GPIBConnector();
@@ -281,7 +272,20 @@ namespace WindowsFormsApplication1
         {
             _Cancel.Set();
         }
+
+        #region UnnecessaryCode
+        //String array to be used by the LOLTimer class. Modify it as you please, don't forget to be creative!
+        private string[] cake = {"Figuring out what to do next...", "Formatting test equipment...", "Starting a phone call...",
+            "Retrieving Facebook API Token...", "Starting music playback...", "Scrambling Tx Power values...", "Doing science stuff..."};
+        void _loltimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
+        {
+            Random r = new Random();
+            ((sender as LolTimer).Param1 as System.ComponentModel.BackgroundWorker)
+                .ReportProgress(2, cake[r.Next(0, cake.Length)]);
+        }
+        #endregion
     }
+
     /// <summary>
     /// Class implementation for saving/loading test configurations
     /// </summary>
