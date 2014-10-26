@@ -20,7 +20,7 @@ namespace WindowsFormsApplication1
     }
 
     /// <summary>
-    /// The brains of the operation. Nested loops, gotos... This functions has them all!
+    /// The brains of the operation. Nested loops, gotos... This function has them all!
     /// </summary>
     class TestRunner
     {
